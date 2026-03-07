@@ -11,8 +11,10 @@ from fastapi import Depends, FastAPI, HTTPException
 from loguru import logger
 
 from acestep.api.train_api_dataset_service import register_training_dataset_routes
-from acestep.api.train_api_lokr_start_route import register_lokr_training_start_route
-from acestep.api.train_api_lora_start_route import register_lora_training_start_route
+from acestep.api.train_api_v2_start_route import (
+    register_v2_lokr_training_start_route,
+    register_v2_lora_training_start_route,
+)
 from acestep.api.train_api_models import ExportLoRARequest, initialize_training_state
 
 
@@ -28,13 +30,13 @@ def register_training_api_routes(
 ) -> None:
     """Register all training-related endpoints onto ``app``."""
 
-    register_lora_training_start_route(
+    register_v2_lora_training_start_route(
         app=app,
         verify_api_key=verify_api_key,
         wrap_response=wrap_response,
         start_tensorboard=start_tensorboard,
     )
-    register_lokr_training_start_route(
+    register_v2_lokr_training_start_route(
         app=app,
         verify_api_key=verify_api_key,
         wrap_response=wrap_response,
