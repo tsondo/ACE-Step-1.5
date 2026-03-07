@@ -14,9 +14,19 @@ class LabelAllMixin:
         transcribe_lyrics: bool = False,
         skip_metas: bool = False,
         only_unlabeled: bool = False,
+        chunk_size: int = 16,
+        batch_size: int = 1,
         progress_callback=None,
+        sample_labeled_callback=None,
     ) -> Tuple[List[AudioSample], str]:
-        """Label all samples in the dataset."""
+        """Label all samples in the dataset.
+
+        Args:
+            chunk_size: Reserved for future batched VAE encoding (currently unused).
+            batch_size: Reserved for future batched VAE encoding (currently unused).
+            sample_labeled_callback: Called after each sample is labeled with
+                (sample_idx, sample, status_msg).
+        """
         if not self.samples:
             return [], "❌ No samples to label. Please scan a directory first."
 
@@ -52,6 +62,9 @@ class LabelAllMixin:
                 success_count += 1
             else:
                 fail_count += 1
+
+            if sample_labeled_callback:
+                sample_labeled_callback(i, sample, status)
 
         status_msg = f"✅ Labeled {success_count}/{total} samples"
         if fail_count > 0:
