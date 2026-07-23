@@ -1,7 +1,11 @@
 """Tests for enhanced sampler modes in dit_generate.py (issue #957)."""
 
+import json
+import os
+import tempfile
 import unittest
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -87,6 +91,102 @@ class EulerSamplerTests(unittest.TestCase):
         )
         self.assertIn("target_latents", result)
         self.assertFalse(np.any(np.isnan(result["target_latents"])))
+
+
+class FiftyStepRegressionTests(unittest.TestCase):
+    """Cover deterministic non-Turbo-style 50-step MLX inference."""
+
+    def test_50_step_schedule_matches_continuous_base_model_schedule(self):
+        """A 50-step request should remain 50 steps and approach zero."""
+        schedule = get_timestep_schedule(shift=1.0, infer_steps=50)
+
+        self.assertEqual(len(schedule), 50)
+        self.assertEqual(schedule[0], 1.0)
+        self.assertAlmostEqual(schedule[-1], 0.02)
+
+    def test_50_step_inference_is_repeatable_without_dcw(self):
+        """The same seed and inputs should produce identical 50-step latents."""
+        kwargs = {
+            "encoder_hidden_states_np": np.zeros((1, 2, 4), dtype=np.float32),
+            "context_latents_np": np.zeros((1, 4, 4), dtype=np.float32),
+            "src_latents_shape": (1, 4, 4),
+            "seed": 1259,
+            "infer_steps": 50,
+            "shift": 1.0,
+            "dcw_enabled": False,
+            "disable_tqdm": True,
+        }
+        first_decoder = _make_fake_decoder()
+        second_decoder = _make_fake_decoder()
+
+        first = mlx_generate_diffusion(mlx_decoder=first_decoder, **kwargs)
+        second = mlx_generate_diffusion(mlx_decoder=second_decoder, **kwargs)
+
+        self.assertEqual(first_decoder.call_count, 50)
+        self.assertEqual(second_decoder.call_count, 50)
+        np.testing.assert_array_equal(first["target_latents"], second["target_latents"])
+
+
+class DiffusionTraceDivergenceTests(unittest.TestCase):
+    """Verify tracing locates the first sampler/DCW divergence."""
+
+    def test_dcw_ab_runs_first_diverge_after_sampler_update(self):
+        """Seeded DCW A/B runs should first diverge at the explicit correction stage."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            traces = {}
+            for enabled in (False, True):
+                trace_path = Path(tmpdir) / f"dcw-{enabled}.jsonl"
+                with patch.dict(
+                    os.environ,
+                    {"ACESTEP_DIFFUSION_TRACE": str(trace_path)},
+                ):
+                    mlx_generate_diffusion(
+                        mlx_decoder=_make_fake_decoder(),
+                        encoder_hidden_states_np=np.zeros((1, 2, 4), dtype=np.float32),
+                        context_latents_np=np.zeros((1, 4, 4), dtype=np.float32),
+                        src_latents_shape=(1, 4, 4),
+                        seed=1259,
+                        infer_steps=2,
+                        shift=1.0,
+                        dcw_enabled=enabled,
+                        disable_tqdm=True,
+                    )
+                traces[enabled] = [
+                    json.loads(line)
+                    for line in trace_path.read_text(encoding="utf-8").splitlines()
+                ]
+
+            def fingerprint(records, stage, step=None):
+                """Return a trace fingerprint for one stage and optional step."""
+                return next(
+                    record["sha256_f32"]
+                    for record in records
+                    if record["stage"] == stage
+                    and (step is None or record.get("step") == step)
+                )
+
+            self.assertEqual(
+                fingerprint(traces[False], "noise.initial"),
+                fingerprint(traces[True], "noise.initial"),
+            )
+            for stage in (
+                "step.latent.before",
+                "step.velocity.raw",
+                "step.velocity.guided",
+                "step.latent.after_sampler",
+            ):
+                self.assertEqual(
+                    fingerprint(traces[False], stage, 0),
+                    fingerprint(traces[True], stage, 0),
+                )
+
+            sampler_hash = fingerprint(traces[True], "step.latent.after_sampler", 0)
+            corrected_hash = fingerprint(traces[True], "step.latent.after_dcw", 0)
+            self.assertNotEqual(sampler_hash, corrected_hash)
+            self.assertEqual(
+                corrected_hash,
+                fingerprint(traces[True], "step.latent.before", 1),
+            )
 
 
 class HeunSamplerTests(unittest.TestCase):
@@ -263,6 +363,12 @@ class GenerationParamsValidationTests(unittest.TestCase):
         from acestep.inference import GenerationParams
         p = GenerationParams(sampler_mode="heun", velocity_norm_threshold=2.0, velocity_ema_factor=0.1)
         self.assertEqual(p.sampler_mode, "heun")
+
+    def test_dcw_default_is_deferred_to_loaded_model_family(self):
+        """GenerationParams should not globally enable DCW before model selection."""
+        from acestep.inference import GenerationParams
+
+        self.assertIsNone(GenerationParams().dcw_enabled)
 
 
 class DiffusionBridgeNewParamsTests(unittest.TestCase):

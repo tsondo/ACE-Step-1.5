@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 from loguru import logger
 
+from acestep.models.common.inference_trace import trace_tensor
+
 
 class ServiceGenerateExecuteMixin:
     """Run diffusion execution for normalized service-generation requests."""
@@ -181,6 +183,16 @@ class ServiceGenerateExecuteMixin:
                     is_covers=payload["is_covers"],
                     precomputed_lm_hints_25Hz=payload["precomputed_lm_hints_25Hz"],
                 )
+                trace_tensor(
+                    "condition.encoder",
+                    encoder_hidden_states,
+                    backend=dit_backend,
+                )
+                trace_tensor(
+                    "condition.context",
+                    context_latents,
+                    backend=dit_backend,
+                )
 
                 if self.use_mlx_dit and self.mlx_decoder is not None:
                     if generate_kwargs.get("dcw_enabled") and generate_kwargs.get("dcw_wavelet", "haar") != "haar":
@@ -263,4 +275,9 @@ class ServiceGenerateExecuteMixin:
                     logger.info("[service_generate] DiT diffusion via PyTorch ({})...", self.device)
                     outputs = self.model.generate_audio(**generate_kwargs)
 
+        trace_tensor(
+            "diffusion.target",
+            outputs["target_latents"],
+            backend=dit_backend,
+        )
         return outputs, encoder_hidden_states, encoder_attention_mask, context_latents

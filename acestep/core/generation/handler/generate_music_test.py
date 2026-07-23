@@ -334,5 +334,55 @@ class TurboGuidanceScaleTests(unittest.TestCase):
         )
 
 
+class ModelAwareDcwDefaultTests(unittest.TestCase):
+    """Verify DCW defaults do not corrupt long non-Turbo trajectories."""
+
+    def test_non_turbo_50_step_inference_disables_dcw_by_default(self):
+        """Non-Turbo should run its recommended 50 steps without experimental DCW."""
+        host = _Host(is_turbo=False)
+        out = host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            inference_steps=50,
+            guidance_scale=7.0,
+            use_random_seed=False,
+            seed=77,
+        )
+
+        forwarded = host.calls["_run_generate_music_service_with_progress"]
+        self.assertEqual(out, host._final_payload)
+        self.assertEqual(forwarded["inference_steps"], 50)
+        self.assertFalse(forwarded["dcw_enabled"])
+
+    def test_turbo_keeps_dcw_enabled_by_default(self):
+        """Turbo's established 8-step default should remain DCW-enabled."""
+        host = _Host(is_turbo=True)
+        host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            inference_steps=8,
+            use_random_seed=False,
+            seed=77,
+        )
+
+        forwarded = host.calls["_run_generate_music_service_with_progress"]
+        self.assertTrue(forwarded["dcw_enabled"])
+
+    def test_explicit_non_turbo_dcw_opt_in_is_preserved(self):
+        """Advanced callers must still be able to enable DCW for non-Turbo."""
+        host = _Host(is_turbo=False)
+        host.generate_music(
+            captions="cap",
+            lyrics="lyr",
+            inference_steps=50,
+            dcw_enabled=True,
+            use_random_seed=False,
+            seed=77,
+        )
+
+        forwarded = host.calls["_run_generate_music_service_with_progress"]
+        self.assertTrue(forwarded["dcw_enabled"])
+
+
 if __name__ == "__main__":
     unittest.main()

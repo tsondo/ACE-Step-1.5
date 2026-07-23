@@ -215,6 +215,13 @@ class InitServiceMixinTests(unittest.TestCase):
         host.config = types.SimpleNamespace(is_turbo=True)
         self.assertTrue(host.is_turbo_model())
 
+    def test_is_turbo_model_handles_missing_config_attribute(self):
+        """It reports non-Turbo while handler initialization is incomplete."""
+        host = _Host(project_root="K:/fake_root")
+        del host.config
+
+        self.assertFalse(host.is_turbo_model())
+
     def test_is_flash_attention_available_rejects_non_cuda(self):
         """It rejects FlashAttention on non-CUDA targets."""
         host = _Host(project_root="K:/fake_root", device="cpu")

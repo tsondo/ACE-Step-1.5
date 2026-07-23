@@ -1,0 +1,69 @@
+"""Tests for deterministic diffusion tensor tracing."""
+
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
+import torch
+
+from acestep.models.common.dcw_correction import DCWCorrector
+from acestep.models.common.inference_trace import TRACE_PATH_ENV, trace_tensor
+
+
+class InferenceTraceTests(unittest.TestCase):
+    """Verify trace output is opt-in, deterministic, and stage-addressable."""
+
+    def test_trace_is_noop_without_environment_path(self):
+        """Disabled tracing should not create any output file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "trace.jsonl"
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop(TRACE_PATH_ENV, None)
+                trace_tensor("noise.initial", np.ones((1, 2), dtype=np.float32))
+            self.assertFalse(path.exists())
+
+    def test_trace_records_repeatable_tensor_fingerprint(self):
+        """Identical tensors should produce identical summaries across stages."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "trace.jsonl"
+            tensor = np.array([[1.0, -2.0, 3.0]], dtype=np.float32)
+            with patch.dict(os.environ, {TRACE_PATH_ENV: str(path)}):
+                trace_tensor("step.latent.after_sampler", tensor, step=0, backend="test")
+                trace_tensor("step.latent.after_dcw", tensor, step=0, backend="test")
+
+            records = [
+                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(len(records), 2)
+            self.assertEqual(records[0]["sha256_f32"], records[1]["sha256_f32"])
+            self.assertEqual(records[0]["l2"], records[1]["l2"])
+            self.assertEqual(records[0]["shape"], [1, 3])
+            self.assertEqual(records[1]["stage"], "step.latent.after_dcw")
+
+    def test_pytorch_dcw_trace_captures_before_and_after(self):
+        """PyTorch DCW should emit stage pairs with different fingerprints."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "trace.jsonl"
+            corrector = DCWCorrector(enabled=True, mode="pix", scaler=0.25)
+            x_next = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+            denoised = torch.zeros_like(x_next)
+            with patch.dict(os.environ, {TRACE_PATH_ENV: str(path)}):
+                result = corrector.apply(x_next, denoised, t_curr=0.5)
+
+            records = [
+                json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([record["stage"] for record in records], [
+                "step.latent.after_sampler",
+                "step.latent.after_dcw",
+            ])
+            self.assertNotEqual(records[0]["sha256_f32"], records[1]["sha256_f32"])
+            torch.testing.assert_close(result, x_next * 1.25)
+
+
+if __name__ == "__main__":
+    unittest.main()
