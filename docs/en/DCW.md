@@ -189,6 +189,13 @@ line by line. The MLX path records the initial noise and every raw velocity,
 guided velocity, sampler update, and optional DCW update. PyTorch records the
 conditioning tensors, DCW before/after tensors, and final diffusion target.
 
+The trace does not store prompts, lyrics, audio, or raw tensor contents. It does
+contain seeds, tensor fingerprints, shapes, and summary statistics that can
+correlate repeated runs, so treat it as diagnostic data and share it only when
+intended. Newly created trace files request user-only permissions (`0600`) on
+platforms that support POSIX file modes. On platforms with `O_NOFOLLOW`, trace
+output also refuses symbolic-link targets rather than appending through them.
+
 ## Citation
 
 ```bibtex

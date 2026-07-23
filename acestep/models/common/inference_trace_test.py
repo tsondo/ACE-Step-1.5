@@ -2,6 +2,7 @@
 
 import json
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,7 @@ class InferenceTraceTests(unittest.TestCase):
             self.assertEqual(records[0]["l2"], records[1]["l2"])
             self.assertEqual(records[0]["shape"], [1, 3])
             self.assertEqual(records[1]["stage"], "step.latent.after_dcw")
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode) & 0o077, 0)
 
     def test_pytorch_dcw_trace_captures_before_and_after(self):
         """PyTorch DCW should emit stage pairs with different fingerprints."""
@@ -68,9 +70,8 @@ class InferenceTraceTests(unittest.TestCase):
         """Trace filesystem failures should be diagnostic rather than fatal."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "trace.jsonl"
-            with patch.dict(os.environ, {TRACE_PATH_ENV: str(path)}), patch.object(
-                Path,
-                "open",
+            with patch.dict(os.environ, {TRACE_PATH_ENV: str(path)}), patch(
+                "acestep.models.common.inference_trace.os.open",
                 side_effect=OSError("read-only filesystem"),
             ), patch(
                 "acestep.models.common.inference_trace.logger.warning"
@@ -79,6 +80,23 @@ class InferenceTraceTests(unittest.TestCase):
 
             warning_mock.assert_called_once()
             self.assertIn("Continuing inference", warning_mock.call_args.args[0])
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is unavailable")
+    def test_trace_refuses_to_follow_symbolic_link(self):
+        """Trace output should not append through a symbolic-link path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "private.txt"
+            target.write_text("private", encoding="utf-8")
+            trace_path = Path(tmpdir) / "trace.jsonl"
+            trace_path.symlink_to(target)
+
+            with patch.dict(os.environ, {TRACE_PATH_ENV: str(trace_path)}), patch(
+                "acestep.models.common.inference_trace.logger.warning"
+            ) as warning_mock:
+                trace_tensor("noise.initial", np.ones((1, 2), dtype=np.float32))
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "private")
+            warning_mock.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -81,7 +81,18 @@ def trace_tensor(stage: str, tensor: Any, **metadata: Any) -> None:
     with _WRITE_LOCK:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
+            open_flags = (
+                os.O_APPEND
+                | os.O_CREAT
+                | os.O_WRONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptor = os.open(
+                path,
+                open_flags,
+                0o600,
+            )
+            with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
                 handle.write("\n")
         except OSError as exc:
