@@ -1879,6 +1879,15 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         dcw_wavelet: str = "haar",
         **kwargs,
     ):
+        """Generate SFT-model audio latents with optional CFG, repaint, and DCW.
+
+        Args:
+            dcw_enabled: Whether to apply DCW correction; disabled by default
+                for this non-Turbo model family.
+
+        Returns:
+            A mapping containing generated target latents and timing metrics.
+        """
         # Backward-compat: accept the old misspelled key "diffusion_guidance_sale"
         # so that callers that have not yet updated their code still work correctly.
         # Note: if both keys are passed simultaneously, the old key wins because Python
