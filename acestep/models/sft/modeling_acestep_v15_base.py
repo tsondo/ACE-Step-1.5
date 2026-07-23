@@ -1887,6 +1887,9 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
 
         Returns:
             A mapping containing generated target latents and timing metrics.
+
+        Raises:
+            ValueError: If batch dimensions or the DCW mode are invalid.
         """
         # Backward-compat: accept the old misspelled key "diffusion_guidance_sale"
         # so that callers that have not yet updated their code still work correctly.
