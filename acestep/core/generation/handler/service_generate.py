@@ -74,6 +74,8 @@ class ServiceGenerateMixin:
         conditioning; ``cfg_interval_*`` / ``sampler_mode`` /
         ``velocity_*`` / ``dcw_*`` are sampler tweaks; ``flow_edit_morph``
         layers the V_delta overlay on top of cover/cover-nofsq dispatch.
+        ``dcw_enabled=None`` defers to the loaded model family, while an
+        explicit boolean overrides that model-aware default.
 
         Returns:
             Dict[str, Any]: Service output payload containing generated latents,
