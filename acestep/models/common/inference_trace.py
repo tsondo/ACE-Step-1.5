@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import threading
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,7 @@ def trace_tensor(stage: str, tensor: Any, **metadata: Any) -> None:
                 os.O_APPEND
                 | os.O_CREAT
                 | os.O_WRONLY
+                | getattr(os, "O_NONBLOCK", 0)
                 | getattr(os, "O_NOFOLLOW", 0)
             )
             descriptor = os.open(
@@ -92,9 +94,21 @@ def trace_tensor(stage: str, tensor: Any, **metadata: Any) -> None:
                 open_flags,
                 0o600,
             )
-            with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
-                handle.write("\n")
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    logger.warning(
+                        "[diffusion_trace] Refusing non-regular trace target '{}'. "
+                        "Continuing inference without this trace record.",
+                        path,
+                    )
+                    return
+                with os.fdopen(descriptor, "a", encoding="utf-8") as handle:
+                    descriptor = None
+                    handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
+                    handle.write("\n")
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
         except OSError as exc:
             logger.warning(
                 "[diffusion_trace] Unable to write trace to '{}': {}. "

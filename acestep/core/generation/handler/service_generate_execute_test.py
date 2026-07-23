@@ -60,6 +60,7 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
         self.assertEqual(kwargs["infer_steps"], 16)
         self.assertEqual(kwargs["timesteps"].dtype, torch.float32)
         self.assertEqual(kwargs["timesteps"].device.type, "cpu")
+        self.assertIsNone(kwargs["dcw_enabled"])
 
     def test_attach_service_outputs_persists_required_fields(self):
         """Attached payload fields should be available to downstream handlers."""
@@ -98,6 +99,7 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
         host = _Host()
         host.config = types.SimpleNamespace(is_turbo=False)
         self.assertFalse(host._resolve_service_dcw_enabled({}))
+        self.assertTrue(host._resolve_service_dcw_enabled({"dcw_enabled": True}))
 
         host.config = types.SimpleNamespace(is_turbo=True)
         self.assertTrue(host._resolve_service_dcw_enabled({}))
@@ -144,11 +146,25 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
             )
 
         self.assertFalse(host._mlx_run_diffusion.call_args.kwargs["dcw_enabled"])
+        self.assertFalse(host.model.generate_audio.call_args.kwargs["dcw_enabled"])
         trace_mock.assert_any_call(
             "diffusion.target",
             target,
             backend="PyTorch (cpu)",
         )
+
+        host.config = types.SimpleNamespace(is_turbo=True)
+        host.use_mlx_dit = False
+        host.model.generate_audio.reset_mock()
+        host._execute_service_generate_diffusion(
+            payload=payload,
+            generate_kwargs={},
+            seed_param=1234,
+            infer_method="ode",
+            shift=1.0,
+            audio_cover_strength=1.0,
+        )
+        self.assertTrue(host.model.generate_audio.call_args.kwargs["dcw_enabled"])
 
 
 if __name__ == "__main__":

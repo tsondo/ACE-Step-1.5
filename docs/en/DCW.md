@@ -195,6 +195,9 @@ correlate repeated runs, so treat it as diagnostic data and share it only when
 intended. Newly created trace files request user-only permissions (`0600`) on
 platforms that support POSIX file modes. On platforms with `O_NOFOLLOW`, trace
 output also refuses symbolic-link targets rather than appending through them.
+Trace output accepts only regular files and opens configured targets in
+non-blocking mode where supported, so FIFO and other special-file targets are
+skipped without delaying inference.
 
 ## Citation
 

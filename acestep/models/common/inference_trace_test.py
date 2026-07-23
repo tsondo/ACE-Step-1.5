@@ -98,6 +98,39 @@ class InferenceTraceTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "private")
             warning_mock.assert_called_once()
 
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and hasattr(os, "O_NONBLOCK"),
+        "Non-blocking FIFO support is unavailable",
+    )
+    def test_trace_refuses_fifo_without_blocking(self):
+        """Trace output should reject FIFO targets without blocking inference."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trace_path = Path(tmpdir) / "trace.fifo"
+            os.mkfifo(trace_path)
+
+            with patch.dict(os.environ, {TRACE_PATH_ENV: str(trace_path)}), patch(
+                "acestep.models.common.inference_trace.logger.warning"
+            ) as warning_mock:
+                trace_tensor("noise.initial", np.ones((1, 2), dtype=np.float32))
+
+            self.assertTrue(stat.S_ISFIFO(trace_path.stat().st_mode))
+            warning_mock.assert_called_once()
+
+    def test_trace_closes_open_non_regular_target(self):
+        """An opened special-file descriptor should be rejected and closed."""
+        descriptor = os.open(os.devnull, os.O_WRONLY)
+        with patch.dict(os.environ, {TRACE_PATH_ENV: "unused"}), patch(
+            "acestep.models.common.inference_trace.os.open",
+            return_value=descriptor,
+        ), patch(
+            "acestep.models.common.inference_trace.logger.warning"
+        ) as warning_mock:
+            trace_tensor("noise.initial", np.ones((1, 2), dtype=np.float32))
+
+        warning_mock.assert_called_once()
+        with self.assertRaises(OSError):
+            os.fstat(descriptor)
+
 
 if __name__ == "__main__":
     unittest.main()
