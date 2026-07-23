@@ -13,6 +13,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 TRACE_PATH_ENV = "ACESTEP_DIFFUSION_TRACE"
 
 _WRITE_LOCK = threading.Lock()
@@ -77,7 +79,15 @@ def trace_tensor(stage: str, tensor: Any, **metadata: Any) -> None:
 
     path = Path(output_path).expanduser()
     with _WRITE_LOCK:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
-            handle.write("\n")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
+                handle.write("\n")
+        except OSError as exc:
+            logger.warning(
+                "[diffusion_trace] Unable to write trace to '{}': {}. "
+                "Continuing inference without this trace record.",
+                path,
+                exc,
+            )

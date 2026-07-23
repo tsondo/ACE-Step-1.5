@@ -64,6 +64,22 @@ class InferenceTraceTests(unittest.TestCase):
             self.assertNotEqual(records[0]["sha256_f32"], records[1]["sha256_f32"])
             torch.testing.assert_close(result, x_next * 1.25)
 
+    def test_trace_write_failure_warns_without_aborting_inference(self):
+        """Trace filesystem failures should be diagnostic rather than fatal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "trace.jsonl"
+            with patch.dict(os.environ, {TRACE_PATH_ENV: str(path)}), patch.object(
+                Path,
+                "open",
+                side_effect=OSError("read-only filesystem"),
+            ), patch(
+                "acestep.models.common.inference_trace.logger.warning"
+            ) as warning_mock:
+                trace_tensor("noise.initial", np.ones((1, 2), dtype=np.float32))
+
+            warning_mock.assert_called_once()
+            self.assertIn("Continuing inference", warning_mock.call_args.args[0])
+
 
 if __name__ == "__main__":
     unittest.main()

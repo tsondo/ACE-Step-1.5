@@ -63,6 +63,14 @@ class ServiceGenerateExecuteMixin:
             return seed_list
         return random.randint(0, 2**32 - 1)
 
+    def _resolve_service_dcw_enabled(self, generate_kwargs: Dict[str, Any]) -> bool:
+        """Return an explicit or model-aware DCW value for backend execution."""
+        dcw_enabled = generate_kwargs.get("dcw_enabled")
+        if dcw_enabled is not None:
+            return bool(dcw_enabled)
+        config = getattr(self, "config", None)
+        return bool(getattr(config, "is_turbo", False))
+
     def _build_service_generate_kwargs(
         self,
         payload: Dict[str, Any],
@@ -195,7 +203,8 @@ class ServiceGenerateExecuteMixin:
                 )
 
                 if self.use_mlx_dit and self.mlx_decoder is not None:
-                    if generate_kwargs.get("dcw_enabled") and generate_kwargs.get("dcw_wavelet", "haar") != "haar":
+                    dcw_enabled = self._resolve_service_dcw_enabled(generate_kwargs)
+                    if dcw_enabled and generate_kwargs.get("dcw_wavelet", "haar") != "haar":
                         logger.info(
                             "[service_generate] DCW enabled on MLX path with "
                             "wavelet='{}'; non-Haar wavelets use the PyTorch "
@@ -250,7 +259,7 @@ class ServiceGenerateExecuteMixin:
                             sampler_mode=generate_kwargs.get("sampler_mode", "euler"),
                             velocity_norm_threshold=generate_kwargs.get("velocity_norm_threshold", 0.0),
                             velocity_ema_factor=generate_kwargs.get("velocity_ema_factor", 0.0),
-                            dcw_enabled=generate_kwargs.get("dcw_enabled", True),
+                            dcw_enabled=dcw_enabled,
                             dcw_mode=generate_kwargs.get("dcw_mode", "double"),
                             dcw_scaler=generate_kwargs.get("dcw_scaler", 0.05),
                             dcw_high_scaler=generate_kwargs.get("dcw_high_scaler", 0.02),
@@ -270,6 +279,7 @@ class ServiceGenerateExecuteMixin:
                         )
                     except Exception as exc:
                         logger.warning("[service_generate] MLX diffusion failed ({}); falling back to PyTorch.", exc)
+                        dit_backend = f"PyTorch ({self.device})"
                         outputs = self.model.generate_audio(**generate_kwargs)
                 else:
                     logger.info("[service_generate] DiT diffusion via PyTorch ({})...", self.device)
