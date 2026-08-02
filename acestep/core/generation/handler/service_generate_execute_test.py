@@ -1,7 +1,9 @@
 """Unit tests for service-generation execution helper mixin."""
 
+from contextlib import nullcontext
+import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import torch
 
@@ -58,6 +60,7 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
         self.assertEqual(kwargs["infer_steps"], 16)
         self.assertEqual(kwargs["timesteps"].dtype, torch.float32)
         self.assertEqual(kwargs["timesteps"].device.type, "cpu")
+        self.assertIsNone(kwargs["dcw_enabled"])
 
     def test_attach_service_outputs_persists_required_fields(self):
         """Attached payload fields should be available to downstream handlers."""
@@ -90,6 +93,78 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
         with patch("acestep.core.generation.handler.service_generate_execute.random.randint", return_value=42):
             seed_param = host._resolve_service_seed_param(None)
         self.assertEqual(seed_param, 42)
+
+    def test_resolve_service_dcw_enabled_uses_model_family_when_missing(self):
+        """Missing DCW input should follow the loaded model family."""
+        host = _Host()
+        host.config = types.SimpleNamespace(is_turbo=False)
+        self.assertFalse(host._resolve_service_dcw_enabled({}))
+        self.assertTrue(host._resolve_service_dcw_enabled({"dcw_enabled": True}))
+
+        host.config = types.SimpleNamespace(is_turbo=True)
+        self.assertTrue(host._resolve_service_dcw_enabled({}))
+        self.assertFalse(host._resolve_service_dcw_enabled({"dcw_enabled": False}))
+
+    def test_mlx_fallback_traces_pytorch_backend_and_keeps_non_turbo_dcw_off(self):
+        """MLX fallback should report PyTorch and preserve model-aware DCW."""
+        host = _Host()
+        host.config = types.SimpleNamespace(is_turbo=False)
+        host.use_mlx_dit = True
+        host.mlx_decoder = object()
+        host.model = MagicMock()
+        condition = torch.zeros(1, 4, 4)
+        target = torch.ones(1, 4, 4)
+        host.model.prepare_condition.return_value = (condition, condition, condition)
+        host.model.generate_audio.return_value = {"target_latents": target}
+        host._load_model_context = lambda _name: nullcontext()
+        host._mlx_run_diffusion = MagicMock(side_effect=RuntimeError("MLX failed"))
+        payload = {
+            "text_hidden_states": condition,
+            "text_attention_mask": condition,
+            "lyric_hidden_states": condition,
+            "lyric_attention_mask": condition,
+            "refer_audio_acoustic_hidden_states_packed": condition,
+            "refer_audio_order_mask": torch.zeros(1, dtype=torch.long),
+            "src_latents": condition,
+            "chunk_mask": torch.ones(1, 4, dtype=torch.bool),
+            "is_covers": torch.tensor([False]),
+            "precomputed_lm_hints_25Hz": None,
+            "non_cover_text_hidden_states": None,
+            "non_cover_text_attention_masks": None,
+        }
+
+        with patch(
+            "acestep.core.generation.handler.service_generate_execute.trace_tensor"
+        ) as trace_mock:
+            host._execute_service_generate_diffusion(
+                payload=payload,
+                generate_kwargs={},
+                seed_param=1234,
+                infer_method="ode",
+                shift=1.0,
+                audio_cover_strength=1.0,
+            )
+
+        self.assertFalse(host._mlx_run_diffusion.call_args.kwargs["dcw_enabled"])
+        self.assertFalse(host.model.generate_audio.call_args.kwargs["dcw_enabled"])
+        trace_mock.assert_any_call(
+            "diffusion.target",
+            target,
+            backend="PyTorch (cpu)",
+        )
+
+        host.config = types.SimpleNamespace(is_turbo=True)
+        host.use_mlx_dit = False
+        host.model.generate_audio.reset_mock()
+        host._execute_service_generate_diffusion(
+            payload=payload,
+            generate_kwargs={},
+            seed_param=1234,
+            infer_method="ode",
+            shift=1.0,
+            audio_cover_strength=1.0,
+        )
+        self.assertTrue(host.model.generate_audio.call_args.kwargs["dcw_enabled"])
 
 
 if __name__ == "__main__":

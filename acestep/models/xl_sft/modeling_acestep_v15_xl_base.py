@@ -1884,13 +1884,25 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         sampler_mode: str = "euler",
         velocity_norm_threshold: float = 0.0,
         velocity_ema_factor: float = 0.0,
-        dcw_enabled: bool = True,
+        dcw_enabled: bool = False,
         dcw_mode: str = "double",
         dcw_scaler: float = 0.05,
         dcw_high_scaler: float = 0.02,
         dcw_wavelet: str = "haar",
         **kwargs,
     ):
+        """Generate XL SFT audio latents with optional CFG, repaint, and DCW.
+
+        Args:
+            dcw_enabled: Whether to apply DCW correction; disabled by default
+                for this non-Turbo model family.
+
+        Returns:
+            A mapping containing generated target latents and timing metrics.
+
+        Raises:
+            ValueError: If batch dimensions or the DCW mode are invalid.
+        """
         # Backward-compat: accept the old misspelled key "diffusion_guidance_sale"
         # so that callers that have not yet updated their code still work correctly.
         # Note: if both keys are passed simultaneously, the old key wins because Python

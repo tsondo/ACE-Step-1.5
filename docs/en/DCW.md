@@ -78,7 +78,7 @@ are forwarded through the generation handler chain into the base model's
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `dcw_enabled` | `bool` | `True` | Master switch. Set to `False` for a clean A/B against the uncorrected sampler. |
+| `dcw_enabled` | `Optional[bool]` | `None` | Model-aware default: enabled for Turbo and disabled for non-Turbo. Set explicitly for a controlled A/B. |
 | `dcw_mode` | `str` | `"double"` | One of `"low"`, `"high"`, `"double"`, `"pix"`. |
 | `dcw_scaler` | `float` | `0.05` | Low-band correction strength (or the single scaler for `"high"` / `"pix"`). Usable range `0–0.1`. |
 | `dcw_high_scaler` | `float` | `0.02` | High-band correction strength (used only when `dcw_mode == "double"`). Usable range `0–0.1`. |
@@ -139,22 +139,23 @@ result = generate_music(
 
 Open the standard Gradio UI, expand **Advanced DiT** → **🧪 DCW – Differential
 Correction in Wavelet domain (experimental)**, and tune the four
-sliders/dropdowns inside. **Enable DCW** is on by default with
-`mode="double"` and `wavelet="haar"` — uncheck it to A/B against the
-uncorrected sampler.  The default strengths follow the current Think state:
+sliders/dropdowns inside. **Enable DCW** defaults on for Turbo and off for
+non-Turbo models. This prevents the experimental correction from accumulating
+over the 32–50 step Base/SFT schedules while keeping the established Turbo
+behavior. The default strengths follow the current Think state:
 non-Think uses `scaler=0.05`, `high_scaler=0.02`, while Think uses
 `scaler=0.02`, `high_scaler=0.06`.
 
 ## Recommended starting values
 
-The defaults come from a grid search on the pure-DiT path (no LLM
+The opt-in parameter values come from a grid search on the pure-DiT path (no LLM
 think-CoT): `dcw_mode="double"`, `dcw_scaler=0.05`,
 `dcw_high_scaler=0.02`, `dcw_wavelet="haar"`.  In LLM-think mode the
 overall DCW gain is small and the optimum band drifts slightly, so Gradio
 switches to `dcw_scaler=0.02` and `dcw_high_scaler=0.06` when Think is
 enabled.  Direct Python callers can override these values on
-`GenerationParams`; the HTTP generation routes currently use the
-`GenerationParams` defaults and do not expose per-request `dcw_*` fields.
+`GenerationParams`; the HTTP generation routes currently use the model-aware
+default and do not expose per-request `dcw_*` fields.
 
 - `"low"` alone (`dcw_scaler=0.02`) is a safer, more conservative
   setting if `"double"` sounds too aggressive for a given track.
@@ -172,6 +173,31 @@ DCW is wired into every ACE-Step sampler path:
 - **MLX** (Apple Silicon): native Haar plus a `pytorch_wavelets` bridge
   for non-Haar bases — same `dcw_*` kwargs produce the same output.
 - **Gradio UI**: all four controls live under **Advanced DiT → 🧪 DCW**.
+
+## Deterministic diffusion trace
+
+Set `ACESTEP_DIFFUSION_TRACE` to a JSONL file before starting inference:
+
+```bash
+ACESTEP_DIFFUSION_TRACE=output/xl-sft-trace.jsonl python cli.py -c xl-sft.toml
+```
+
+Each record contains a stable stage name, shape, dtype, finite-value statistics,
+L2 norm, and SHA-256 fingerprint of the float32 tensor bytes. No timestamps or
+random identifiers are included, so runs with the same seed can be compared
+line by line. The MLX path records the initial noise and every raw velocity,
+guided velocity, sampler update, and optional DCW update. PyTorch records the
+conditioning tensors, DCW before/after tensors, and final diffusion target.
+
+The trace does not store prompts, lyrics, audio, or raw tensor contents. It does
+contain seeds, tensor fingerprints, shapes, and summary statistics that can
+correlate repeated runs, so treat it as diagnostic data and share it only when
+intended. Newly created trace files request user-only permissions (`0600`) on
+platforms that support POSIX file modes. On platforms with `O_NOFOLLOW`, trace
+output also refuses symbolic-link targets rather than appending through them.
+Trace output accepts only regular files and opens configured targets in
+non-blocking mode where supported, so FIFO and other special-file targets are
+skipped without delaying inference.
 
 ## Citation
 

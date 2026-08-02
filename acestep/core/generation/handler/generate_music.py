@@ -177,6 +177,27 @@ class GenerateMusicMixin:
             "error": msg,
         }
 
+    def _resolve_dcw_enabled(self, dcw_enabled: Optional[bool]) -> bool:
+        """Resolve the experimental DCW default for the loaded model family.
+
+        Args:
+            dcw_enabled: Explicit caller choice, or ``None`` for a model-aware
+                default.
+
+        Returns:
+            ``True`` for Turbo by default and ``False`` for non-Turbo by
+            default; explicit caller choices are preserved.
+        """
+        if dcw_enabled is not None:
+            return bool(dcw_enabled)
+        resolved = self.is_turbo_model()
+        logger.info(
+            "[generate_music] Using model-aware DCW default: enabled={} (turbo={}).",
+            resolved,
+            resolved,
+        )
+        return resolved
+
     def generate_music(
         self,
         captions: str,
@@ -209,7 +230,7 @@ class GenerateMusicMixin:
         sampler_mode: str = "euler",
         velocity_norm_threshold: float = 0.0,
         velocity_ema_factor: float = 0.0,
-        dcw_enabled: bool = True,
+        dcw_enabled: Optional[bool] = None,
         dcw_mode: str = "double",
         dcw_scaler: float = 0.05,
         dcw_high_scaler: float = 0.02,
@@ -245,8 +266,9 @@ class GenerateMusicMixin:
             guidance_scale: CFG guidance value.
             seed: Optional explicit seed from caller/UI.
             infer_method: Diffusion method name.
-            dcw_enabled: Enable Differential Correction in Wavelet domain
-                (CVPR 2026, arXiv:2604.16044) at each sampler step.  Off by default.
+            dcw_enabled: Enable Differential Correction in Wavelet domain.
+                ``None`` selects the model-aware default: enabled for Turbo and
+                disabled for non-Turbo models.
             dcw_mode: DCW mode — ``"low"`` / ``"high"`` / ``"double"`` / ``"pix"``.
             dcw_scaler: Low-band (or single-band) correction strength; modulated
                 by ``t_curr`` inside the sampler, so the effective strength decays
@@ -292,6 +314,7 @@ class GenerateMusicMixin:
                 guidance_scale,
             )
             guidance_scale = 1.0
+        dcw_enabled = self._resolve_dcw_enabled(dcw_enabled)
 
         # When LoRA is active, verify all decoder parameters are on the
         # expected device and dtype.  CPU-offload round-trips can leave PEFT

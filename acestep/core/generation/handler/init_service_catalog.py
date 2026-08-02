@@ -74,6 +74,7 @@ class InitServiceCatalogMixin:
 
     def is_turbo_model(self) -> bool:
         """Check whether the currently loaded model is a turbo variant."""
-        if self.config is None:
+        config = getattr(self, "config", None)
+        if config is None:
             return False
-        return getattr(self.config, "is_turbo", False)
+        return getattr(config, "is_turbo", False)

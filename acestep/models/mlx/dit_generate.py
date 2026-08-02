@@ -25,6 +25,8 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 from tqdm import tqdm
 
+from acestep.models.common.inference_trace import trace_tensor
+
 logger = logging.getLogger(__name__)
 
 VALID_SAMPLER_MODES = {"euler", "heun"}
@@ -191,7 +193,7 @@ def mlx_generate_diffusion(
     sampler_mode: str = "euler",
     velocity_norm_threshold: float = 0.0,
     velocity_ema_factor: float = 0.0,
-    dcw_enabled: bool = True,
+    dcw_enabled: bool = False,
     dcw_mode: str = "double",
     dcw_scaler: float = 0.05,
     dcw_high_scaler: float = 0.02,
@@ -310,6 +312,7 @@ def mlx_generate_diffusion(
         return mx.random.normal((bsz, T, C), key=key)
 
     noise = _draw_noise(seed)
+    trace_tensor("noise.initial", noise, backend="mlx", seed=seed)
     # Retake mixing: variance-preserving blend with an independent noise draw.
     # v=0 -> noise unchanged; v=1 -> equivalent to using retake_seed as the main seed.
     if retake_variance > 0.0:
@@ -428,13 +431,34 @@ def mlx_generate_diffusion(
 
         # Build input: double batch for CFG
         x_in = mx.concatenate([xt, xt], axis=0) if do_cfg else xt
+        trace_tensor(
+            "step.latent.before",
+            xt,
+            backend="mlx",
+            step=step_idx,
+            timestep=current_t,
+        )
 
         # ---- First model evaluation (predictor) ----
         vt, cache = _model_eval(x_in, current_t, enc_hs, ctx, cache)
         mx.eval(vt)
+        trace_tensor(
+            "step.velocity.raw",
+            vt,
+            backend="mlx",
+            step=step_idx,
+            timestep=current_t,
+        )
 
         vt = _apply_cfg(vt, current_t)
         vt = _apply_stabilisation(vt, xt, prev_vt)
+        trace_tensor(
+            "step.velocity.guided",
+            vt,
+            backend="mlx",
+            step=step_idx,
+            timestep=current_t,
+        )
 
         # Cache pre-step latent so DCW can reconstruct the predicted clean
         # sample ``denoised = x_before - v * t`` after the sampler update.
@@ -484,6 +508,14 @@ def mlx_generate_diffusion(
 
             mx.eval(xt)
 
+        trace_tensor(
+            "step.latent.after_sampler",
+            xt,
+            backend="mlx",
+            step=step_idx,
+            timestep=current_t,
+        )
+
         # DCW correction — push x_next's frequency bands away from the
         # predicted clean sample.  Scaler decays with t_curr so this is
         # identity at t=0 and strongest at t≈1.
@@ -497,6 +529,13 @@ def mlx_generate_diffusion(
                 high_scaler=dcw_high_scaler, wavelet=dcw_wavelet,
             )
             mx.eval(xt)
+            trace_tensor(
+                "step.latent.after_dcw",
+                xt,
+                backend="mlx",
+                step=step_idx,
+                timestep=current_t,
+            )
 
         prev_vt = vt  # store for EMA
 
@@ -521,6 +560,7 @@ def mlx_generate_diffusion(
     time_costs["total_time_cost"] = total_end - total_start
     time_costs["sampler_mode"] = sampler_mode
 
+    trace_tensor("diffusion.target", xt, backend="mlx", steps=num_steps)
     result_np = np.array(xt)
     return {
         "target_latents": result_np,

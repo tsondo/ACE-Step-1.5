@@ -40,6 +40,7 @@ import torch
 from loguru import logger
 
 from .dcw_primitives import dcw_double, dcw_high, dcw_low, dcw_pix
+from .inference_trace import trace_tensor
 
 __all__ = [
     "VALID_DCW_MODES",
@@ -91,6 +92,7 @@ class DCWCorrector:
         self.scaler = float(scaler)
         self.high_scaler = float(high_scaler)
         self.wavelet = wavelet
+        self._trace_step = 0
         if self.is_active:
             # One-line receipt so users can confirm the UI values actually
             # reached the sampler.  If a wavelet change in the UI seems
@@ -125,16 +127,24 @@ class DCWCorrector:
         """
         if not self.is_active:
             return x_next
+        step = self._trace_step
+        self._trace_step += 1
         t = float(t_curr)
         low_s = t * self.scaler
         high_s = (1.0 - t) * self.scaler
         double_high_s = (1.0 - t) * self.high_scaler
+        trace_tensor(
+            "step.latent.after_sampler", x_next, backend="pytorch", step=step, timestep=t
+        )
         if self.mode == "low":
-            return dcw_low(x_next, denoised, low_s, self.wavelet)
-        if self.mode == "high":
-            return dcw_high(x_next, denoised, high_s, self.wavelet)
-        if self.mode == "double":
-            return dcw_double(x_next, denoised, low_s, double_high_s, self.wavelet)
-        if self.mode == "pix":
-            return dcw_pix(x_next, denoised, self.scaler)
-        raise RuntimeError(f"unreachable dcw_mode={self.mode}")
+            result = dcw_low(x_next, denoised, low_s, self.wavelet)
+        elif self.mode == "high":
+            result = dcw_high(x_next, denoised, high_s, self.wavelet)
+        elif self.mode == "double":
+            result = dcw_double(x_next, denoised, low_s, double_high_s, self.wavelet)
+        else:
+            result = dcw_pix(x_next, denoised, self.scaler)
+        trace_tensor(
+            "step.latent.after_dcw", result, backend="pytorch", step=step, timestep=t
+        )
+        return result
